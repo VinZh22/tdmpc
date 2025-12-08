@@ -15,6 +15,7 @@ from env import make_env
 from algorithm.tdmpc import TDMPC
 from algorithm.helper import Episode, ReplayBuffer
 import logger
+import matplotlib.pyplot as plt
 torch.backends.cudnn.benchmark = True
 __CONFIG__, __LOGS__ = 'cfgs', 'logs'
 
@@ -91,6 +92,20 @@ def train(cfg):
 
 	L.finish(agent)
 	print('Training completed successfully')
+
+		# plot loses from agent with log y-axis
+	plt.figure(figsize=(12, 8))
+	for key, values in agent.loss_history.items():
+		plt.plot(values, label=key)
+	plt.xlabel('Training Steps')
+	plt.yscale('log')
+	plt.ylabel('Loss')
+	plt.title('Training Losses Over Time')
+	plt.legend()
+	# save the plot
+	plt_path = work_dir / 'training_losses.png'
+	plt.savefig(plt_path)
+	print(f'Training loss plot saved to {plt_path}')
 
 
 if __name__ == '__main__':

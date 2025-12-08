@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from copy import deepcopy
 import algorithm.helper as h
-
+from .soap import SOAP
 
 class TOLD(nn.Module):
 	"""Task-Oriented Latent Dynamics (TOLD) model used in TD-MPC."""
@@ -57,10 +57,21 @@ class TDMPC():
 		self.model = TOLD(cfg).cuda()
 		self.model_target = deepcopy(self.model)
 		self.optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
-		self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr)
+		# self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr)
+		self.optim = SOAP(self.model.parameters(), lr=self.cfg.lr, weight_decay=1e-4)
 		self.aug = h.RandomShiftsAug(cfg)
 		self.model.eval()
 		self.model_target.eval()
+
+		self.loss_history = {'consistency_loss': [],
+							 'reward_loss': [],
+							 'value_loss': [], 	}
+		self.weight_adapted = {'consistency_coef': cfg.consistency_coef,
+							   'reward_coef': cfg.reward_coef,
+							   'value_coef': cfg.value_coef}
+
+		self.step_adapt_size = 2000  # Frequency of loss weight adaptation
+		self.next_adapt_step = self.step_adapt_size	
 
 	def state_dict(self):
 		"""Retrieve state dict of TOLD model, including slow-moving target network."""
@@ -176,6 +187,16 @@ class TDMPC():
 			torch.min(*self.model_target.Q(next_z, self.model.pi(next_z, self.cfg.min_std)))
 		return td_target
 
+	def adapting_naive_weight(self, consistency_loss, reward_loss, value_loss):
+		"""Adapt the loss weights based on the current losses."""
+		c_loss = consistency_loss.clamp(max=1e4).mean().item()
+		r_loss = reward_loss.clamp(max=1e4).mean().item()
+		v_loss = value_loss.clamp(max=1e4).mean().item()
+		total_loss = c_loss + r_loss + v_loss + 1e-8
+		self.weight_adapted['consistency_coef'] = (c_loss / total_loss)
+		self.weight_adapted['reward_coef'] = (r_loss / total_loss)
+		self.weight_adapted['value_coef'] = (v_loss / total_loss)
+
 	def update(self, replay_buffer, step):
 		"""Main update function. Corresponds to one iteration of the TOLD model learning."""
 		obs, next_obses, action, reward, idxs, weights = replay_buffer.sample()
@@ -207,10 +228,14 @@ class TDMPC():
 			priority_loss += rho * (h.l1(Q1, td_target) + h.l1(Q2, td_target))
 
 		# Optimize model
-		total_loss = self.cfg.consistency_coef * consistency_loss.clamp(max=1e4) + \
-					 self.cfg.reward_coef * reward_loss.clamp(max=1e4) + \
-					 self.cfg.value_coef * value_loss.clamp(max=1e4)
+		total_loss = self.weight_adapted['consistency_coef'] * consistency_loss.clamp(max=1e4) + \
+					 self.weight_adapted['reward_coef'] * reward_loss.clamp(max=1e4) + \
+					 self.weight_adapted['value_coef'] * value_loss.clamp(max=1e4)
 		weighted_loss = (total_loss.squeeze(1) * weights).mean()
+		self.loss_history['consistency_loss'].append(float(consistency_loss.mean().item()))
+		self.loss_history['reward_loss'].append(float(reward_loss.mean().item()))
+		self.loss_history['value_loss'].append(float(value_loss.mean().item()))
+
 		weighted_loss.register_hook(lambda grad: grad * (1/self.cfg.horizon))
 		weighted_loss.backward()
 		grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip_norm, error_if_nonfinite=False)
@@ -221,6 +246,11 @@ class TDMPC():
 		pi_loss = self.update_pi(zs)
 		if step % self.cfg.update_freq == 0:
 			h.ema(self.model, self.model_target, self.cfg.tau)
+		
+		if step >= self.next_adapt_step:
+			self.adapting_naive_weight(consistency_loss, reward_loss, value_loss)
+			print(f"Step {step}: Updated loss weights: {self.weight_adapted}")
+			self.next_adapt_step = self.step_adapt_size*((step // self.step_adapt_size) + 1)
 
 		self.model.eval()
 		return {'consistency_loss': float(consistency_loss.mean().item()),
