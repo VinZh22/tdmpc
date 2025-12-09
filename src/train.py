@@ -54,6 +54,10 @@ def train(cfg):
 	# Run training
 	L = logger.Logger(work_dir, cfg)
 	episode_idx, start_time = 0, time.time()
+
+	episode_rewards = []
+	episode_env_steps = []
+
 	for step in range(0, cfg.train_steps+cfg.episode_length, cfg.episode_length):
 
 		# Collect trajectory
@@ -85,6 +89,11 @@ def train(cfg):
 		train_metrics.update(common_metrics)
 		L.log(train_metrics, category='train')
 
+		episode_rewards.append(episode.cumulative_reward)
+		episode_env_steps.append(env_step)
+	
+
+
 		# Evaluate agent periodically
 		if env_step % cfg.eval_freq == 0:
 			common_metrics['episode_reward'] = evaluate(env, agent, cfg.eval_episodes, step, env_step, L.video)
@@ -106,6 +115,17 @@ def train(cfg):
 	plt_path = work_dir / 'training_losses.png'
 	plt.savefig(plt_path)
 	print(f'Training loss plot saved to {plt_path}')
+
+	# plot training returns over time
+	plt.figure(figsize=(8, 5))
+	plt.plot(episode_env_steps, episode_rewards)
+	plt.xlabel('Environment steps')
+	plt.ylabel('Episode return')
+	plt.title('Training Return Over Time')
+	plt.grid(True)
+	ret_path = work_dir / 'training_returns.png'
+	plt.savefig(ret_path)
+	print(f'Training return plot saved to {ret_path}')
 
 
 if __name__ == '__main__':

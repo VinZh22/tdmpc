@@ -56,9 +56,9 @@ class TDMPC():
 		self.std = h.linear_schedule(cfg.std_schedule, 0)
 		self.model = TOLD(cfg).cuda()
 		self.model_target = deepcopy(self.model)
-		self.optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
-		# self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr)
-		self.optim = SOAP(self.model.parameters(), lr=self.cfg.lr, weight_decay=1e-4)
+		#self.optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
+		self.pi_optim = SOAP(self.model._pi.parameters(), lr=self.cfg.lr/5, weight_decay=1e-4)
+		self.optim = SOAP(self.model.parameters(), lr=self.cfg.lr/5, weight_decay=1e-4)
 		self.aug = h.RandomShiftsAug(cfg)
 		self.model.eval()
 		self.model_target.eval()
@@ -70,7 +70,7 @@ class TDMPC():
 							   'reward_coef': cfg.reward_coef,
 							   'value_coef': cfg.value_coef}
 
-		self.step_adapt_size = 2000  # Frequency of loss weight adaptation
+		self.step_adapt_size = 200000000  # Frequency of loss weight adaptation
 		self.next_adapt_step = self.step_adapt_size	
 
 	def state_dict(self):
