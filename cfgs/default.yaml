@@ -4,7 +4,7 @@ modality: 'state'
 action_repeat: ???
 discount: 0.99
 episode_length: 1000/${action_repeat}
-train_steps: 500000/${action_repeat}
+train_steps: 300000/${action_repeat}
 
 # planning
 iterations: 6
@@ -51,3 +51,6 @@ eval_freq: 20000
 eval_episodes: 10
 save_video: false
 save_model: false
+
+# n step TD
+n_step_TD: 3

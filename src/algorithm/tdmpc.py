@@ -57,8 +57,9 @@ class TDMPC():
 		self.model = TOLD(cfg).cuda()
 		self.model_target = deepcopy(self.model)
 		self.optim = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
-		# self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr)
-		self.optim = SOAP(self.model.parameters(), lr=self.cfg.lr, weight_decay=1e-4)
+		self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr)
+		# self.optim = SOAP(self.model.parameters(), lr=self.cfg.lr, weight_decay=1e-4)
+		# self.pi_optim = SOAP(self.model._pi.parameters(), lr=self.cfg.lr, weight_decay=1e-4)
 		self.aug = h.RandomShiftsAug(cfg)
 		self.model.eval()
 		self.model_target.eval()
@@ -72,6 +73,8 @@ class TDMPC():
 
 		self.step_adapt_size = 2000  # Frequency of loss weight adaptation
 		self.next_adapt_step = self.step_adapt_size	
+
+		self.n_step_TD = cfg.n_step_TD
 
 	def state_dict(self):
 		"""Retrieve state dict of TOLD model, including slow-moving target network."""
@@ -186,6 +189,17 @@ class TDMPC():
 		td_target = reward + self.cfg.discount * \
 			torch.min(*self.model_target.Q(next_z, self.model.pi(next_z, self.cfg.min_std)))
 		return td_target
+	
+	@torch.no_grad()
+	def _ntd_target(self, next_obss, rewards, t):
+		forward_step = min(self.n_step_TD, len(next_obss) - t)
+		obs_tplusn = next_obss[t + forward_step - 1]
+		z_tplusn = self.model.h(obs_tplusn)
+		rewards = torch.stack([ (self.cfg.discount ** i) * rewards[t + i] for i in range(forward_step) ], dim=0)
+		td_target = torch.sum(rewards, dim=0)
+		td_target += (self.cfg.discount ** self.n_step_TD) * \
+			torch.min(*self.model_target.Q(z_tplusn, self.model.pi(z_tplusn, self.cfg.min_std)))
+		return td_target
 
 	def adapting_naive_weight(self, consistency_loss, reward_loss, value_loss):
 		"""Adapt the loss weights based on the current losses."""
@@ -217,7 +231,8 @@ class TDMPC():
 			with torch.no_grad():
 				next_obs = self.aug(next_obses[t])
 				next_z = self.model_target.h(next_obs)
-				td_target = self._td_target(next_obs, reward[t])
+				td_target = self._ntd_target(next_obses, reward, t)
+				# td_target = self._td_target(next_obs, reward[t])
 			zs.append(z.detach())
 
 			# Losses
@@ -247,10 +262,10 @@ class TDMPC():
 		if step % self.cfg.update_freq == 0:
 			h.ema(self.model, self.model_target, self.cfg.tau)
 		
-		if step >= self.next_adapt_step:
-			self.adapting_naive_weight(consistency_loss, reward_loss, value_loss)
-			print(f"Step {step}: Updated loss weights: {self.weight_adapted}")
-			self.next_adapt_step = self.step_adapt_size*((step // self.step_adapt_size) + 1)
+		# if step >= self.next_adapt_step:
+		# 	self.adapting_naive_weight(consistency_loss, reward_loss, value_loss)
+		# 	print(f"Step {step}: Updated loss weights: {self.weight_adapted}")
+		# 	self.next_adapt_step = self.step_adapt_size*((step // self.step_adapt_size) + 1)
 
 		self.model.eval()
 		return {'consistency_loss': float(consistency_loss.mean().item()),
