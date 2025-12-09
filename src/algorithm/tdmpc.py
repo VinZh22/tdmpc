@@ -71,7 +71,7 @@ class TDMPC():
 							   'reward_coef': cfg.reward_coef,
 							   'value_coef': cfg.value_coef}
 
-		self.step_adapt_size = 2000  # Frequency of loss weight adaptation
+		self.step_adapt_size = 200000000  # Frequency of loss weight adaptation
 		self.next_adapt_step = self.step_adapt_size	
 
 		self.n_step_TD = cfg.n_step_TD
